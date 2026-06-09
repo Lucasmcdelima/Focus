@@ -1,0 +1,95 @@
+name: Boletim Focus
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  schedule:
+    - cron: "0 14 * * 1"   # toda segunda-feira às 14h UTC (11h Brasília)
+  workflow_dispatch:         # permite disparo manual pela UI do GitHub
+    inputs:
+      date:
+        description: "Data de referência (AAAA-MM-DD). Deixe vazio para usar a data de hoje."
+        required: false
+        default: ""
+      force:
+        description: "Sobrescrever arquivos existentes?"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+jobs:
+  # ── Job 1: testes unitários ───────────────────────────────────────────────
+  tests:
+    name: Testes unitários
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Executar testes
+        run: python -m pytest tests/ -v
+
+  # ── Job 2: pipeline semanal (só em schedule / workflow_dispatch) ──────────
+  focus:
+    name: Download, extração e resumo
+    runs-on: ubuntu-latest
+    needs: tests   # só roda se os testes passarem
+
+    # não executa em push/PR — apenas no agendamento e no disparo manual
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write   # necessário para o commit dos artefatos
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Executar pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            ARGS="$ARGS --date ${{ github.event.inputs.date }}"
+          fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          python src/pipeline.py $ARGS
+
+      - name: Commit dos artefatos gerados
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ output/
+          # só comita se houver mudanças
+          git diff --cached --quiet || git commit -m "chore: Focus $(date +%Y-%m-%d)"
+
+      - name: Push
+        uses: ad-m/github-push-action@v0.8.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref }}
