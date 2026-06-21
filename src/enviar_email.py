@@ -199,7 +199,8 @@ def main() -> None:
 
     # --- Envio real: lê credenciais das variáveis de ambiente ---
     usuario = os.environ.get(ENV_USER, "").strip()
-    senha = os.environ.get(ENV_PASSWORD, "").strip()
+    # Remove espaços e caracteres não-ASCII (ex: \xa0 copiado da página do Google)
+    senha = "".join(c for c in os.environ.get(ENV_PASSWORD, "") if c.isascii() and not c.isspace())
 
     if not usuario:
         print(f"[erro] Variável {ENV_USER!r} não definida.", file=sys.stderr)
